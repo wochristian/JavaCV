@@ -1,0 +1,116 @@
+import org.bytedeco.javacv.CanvasFrame;
+import org.bytedeco.javacv.FFmpegFrameGrabber;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.OpenCVFrameConverter;
+import org.bytedeco.opencv.opencv_core.Mat;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+
+public class VideoPlayer {
+
+    // Video control states
+    private static volatile boolean isPlaying = false;
+    private static volatile boolean stepRequested = false;
+    private static volatile boolean running = true;
+
+    public static void main(String[] args) {
+        String videoPath = "FreeFall.mp4";
+
+        // Initialize the Frame Grabber for the video file
+        FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(videoPath);
+        try {
+            grabber.start();
+        } catch (Exception e) {
+            System.err.println("Error: Could not open video file '" + videoPath + "'");
+            e.printStackTrace();
+            return;
+        }
+
+        // Create the CanvasFrame (the window to display the video)
+        CanvasFrame canvas = new CanvasFrame("JavaCV Video Player", CanvasFrame.getDefaultGamma() / grabber.getGamma());
+        canvas.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        
+        // Handle window closing cleanly
+        canvas.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                running = false;
+            }
+        });
+
+        // Setup the Control Panel (Buttons)
+        JPanel controlPanel = new JPanel();
+        JButton btnStart = new JButton("Start");
+        JButton btnStop = new JButton("Stop");
+        JButton btnStep = new JButton("Step");
+
+        controlPanel.add(btnStart);
+        controlPanel.add(btnStop);
+        controlPanel.add(btnStep);
+
+        // Add the control panel to the bottom of the canvas layout
+        canvas.add(controlPanel, BorderLayout.SOUTH);
+        canvas.pack(); // Resize window to fit canvas and buttons
+
+        // Button Action Listeners
+        btnStart.addActionListener(e -> isPlaying = true);
+        btnStop.addActionListener(e -> isPlaying = false);
+        btnStep.addActionListener(e -> {
+            isPlaying = false;      // Pause playback if it's running
+            stepRequested = true;   // Trigger a single frame step
+        });
+
+        // Converter to transform JavaCV Frames to OpenCV Mats (or buffered images internally)
+        OpenCVFrameConverter.ToMat converter = new OpenCVFrameConverter.ToMat();
+
+        // Calculate delay between frames based on video frame rate (FPS)
+        long frameDelay = (long) (1000 / grabber.getFrameRate());
+
+        // Main video loop
+        try {
+            Frame frame;
+            while (running) {
+                if (isPlaying || stepRequested) {
+                    // Grab the next frame
+                    frame = grabber.grabImage();
+                    
+                    // If frame is null, we reached the end of the video
+                    if (frame == null) {
+                        System.out.println("End of video reached.");
+                        isPlaying = false;
+                        continue;
+                    }
+
+                    // Convert and display the frame
+                    Mat mat = converter.convert(frame);
+                    canvas.showImage(converter.convert(mat));
+
+                    // Reset the step flag if it was a single step action
+                    if (stepRequested) {
+                        stepRequested = false;
+                    }
+
+                    // Maintain steady frame-rate playback pacing
+                    Thread.sleep(frameDelay);
+                } else {
+                    // Idle sleep when paused to prevent pegging the CPU
+                    Thread.sleep(30);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // Clean up resources
+            try {
+                grabber.stop();
+                grabber.release();
+                canvas.dispose();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}

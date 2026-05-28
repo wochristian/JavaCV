@@ -16,9 +16,13 @@ public class VideoPlayer {
     private static volatile boolean stepRequested = false;
     private static volatile boolean resetRequested = false;
     private static volatile boolean running = true;
+    
+    // Scrubbing states
+    private static volatile int seekToFrame = -1;
+    private static volatile boolean isInteracting = false; 
 
     public static void main(String[] args) {
-    	// 1. Get the video file as an InputStream from the JAR resources
+        // Get the video file as an InputStream from the JAR resources
         java.io.InputStream videoStream = VideoPlayer.class.getResourceAsStream("/FreeFall.mp4");
         
         if (videoStream == null) {
@@ -26,9 +30,8 @@ public class VideoPlayer {
             return;
         }
 
-        // 2. Pass the InputStream to the FFmpegFrameGrabber instead of a String path
+        // Initialize the Frame Grabber using the resource stream
         FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(videoStream);
-        
         try {
             grabber.start();
         } catch (Exception e) {
@@ -37,11 +40,16 @@ public class VideoPlayer {
             return;
         }
 
+        // Fetch total video frames for our UI controls
+        int totalFrames = grabber.getLengthInVideoFrames();
+
         // Create the CanvasFrame (the window to display the video)
         CanvasFrame canvas = new CanvasFrame("JavaCV Video Player", CanvasFrame.getDefaultGamma() / grabber.getGamma());
         canvas.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        canvas.setCanvasSize(400, 300);
         
+        // Force the video display area to exactly 400x300
+        canvas.setCanvasSize(400, 300);
+
         // Handle window closing cleanly
         canvas.addWindowListener(new WindowAdapter() {
             @Override
@@ -50,35 +58,63 @@ public class VideoPlayer {
             }
         });
 
-        // Setup the Control Panel (Buttons)
-        JPanel controlPanel = new JPanel();
+        // Setup the Control Panels
+        JPanel mainControlPanel = new JPanel(new BorderLayout());
+        JPanel buttonPanel = new JPanel();
+        JPanel sliderPanel = new JPanel(new BorderLayout());
+
+        // Buttons
         JButton btnStart = new JButton("Start");
         JButton btnStop = new JButton("Stop");
         JButton btnStep = new JButton("Step");
-        JButton btnReset = new JButton("Reset"); // New Reset Button
+        JButton btnReset = new JButton("Reset");
 
-        controlPanel.add(btnStart);
-        controlPanel.add(btnStop);
-        controlPanel.add(btnStep);
-        controlPanel.add(btnReset); // Add Reset to panel
+        buttonPanel.add(btnStart);
+        buttonPanel.add(btnStop);
+        buttonPanel.add(btnStep);
+        buttonPanel.add(btnReset);
 
-        // Add the control panel to the bottom of the canvas layout
-        canvas.add(controlPanel, BorderLayout.SOUTH);
-        canvas.pack(); // Resize window to fit canvas and buttons
+        // Slider & Frame Counter Label
+        JSlider videoSlider = new JSlider(0, totalFrames > 0 ? totalFrames : 100, 0);
+        JLabel lblCounter = new JLabel("Frame: 0 / " + totalFrames + "   ");
+        lblCounter.setHorizontalAlignment(SwingConstants.RIGHT);
+
+        sliderPanel.add(videoSlider, BorderLayout.CENTER);
+        sliderPanel.add(lblCounter, BorderLayout.EAST);
+
+        // Combine panels together
+        mainControlPanel.add(sliderPanel, BorderLayout.NORTH);
+        mainControlPanel.add(buttonPanel, BorderLayout.SOUTH);
+
+        // Add the combined controls to the bottom of the canvas layout
+        canvas.add(mainControlPanel, BorderLayout.SOUTH);
+        canvas.pack(); // Re-fit layout dimensions safely
 
         // Button Action Listeners
         btnStart.addActionListener(e -> isPlaying = true);
         btnStop.addActionListener(e -> isPlaying = false);
         btnStep.addActionListener(e -> {
-            isPlaying = false;      // Pause playback if it's running
-            stepRequested = true;   // Trigger a single frame step
+            isPlaying = false;      
+            stepRequested = true;   
         });
         btnReset.addActionListener(e -> {
-            isPlaying = false;      // Pause the video on reset
-            resetRequested = true;  // Flag the loop to seek to frame 0
+            isPlaying = false;      
+            resetRequested = true;  
         });
 
-        // Converter to transform JavaCV Frames to OpenCV Mats (or buffered images internally)
+        // Slider Change Listener (for scrubbing)
+        videoSlider.addChangeListener(e -> {
+            // Only handle seeks triggered manually by the user dragging the slider bar
+            if (videoSlider.getValueIsAdjusting()) {
+                isInteracting = true;
+                isPlaying = false; // Pause playback while scrubbing
+                seekToFrame = videoSlider.getValue();
+            } else {
+                isInteracting = false;
+            }
+        });
+
+        // Converter to transform JavaCV Frames to OpenCV Mats
         OpenCVFrameConverter.ToMat converter = new OpenCVFrameConverter.ToMat();
 
         // Calculate delay between frames based on video frame rate (FPS)
@@ -88,23 +124,38 @@ public class VideoPlayer {
         try {
             Frame frame;
             while (running) {
-            	// Handle Reset Request
-                if (resetRequested) {
-                    grabber.setFrameNumber(0); // Seek back to the first frame
-                    resetRequested = false;
+                
+                // 1. Handle Explicit Seek Requests (Slider Dragging)
+                if (seekToFrame != -1) {
+                    grabber.setFrameNumber(seekToFrame);
+                    seekToFrame = -1;
                     
-                    // Grab and display the very first frame immediately so the screen updates
                     frame = grabber.grabImage();
                     if (frame != null) {
                         Mat mat = converter.convert(frame);
                         canvas.showImage(converter.convert(mat));
+                        lblCounter.setText("Frame: " + grabber.getFrameNumber() + " / " + totalFrames + "   ");
                     }
                 }
+
+                // 2. Handle Reset Request
+                if (resetRequested) {
+                    grabber.setFrameNumber(0);
+                    resetRequested = false;
+                    
+                    frame = grabber.grabImage();
+                    if (frame != null) {
+                        Mat mat = converter.convert(frame);
+                        canvas.showImage(converter.convert(mat));
+                        videoSlider.setValue(0);
+                        lblCounter.setText("Frame: 0 / " + totalFrames + "   ");
+                    }
+                }
+
+                // 3. Handle Normal Playback / Stepping
                 if (isPlaying || stepRequested) {
-                    // Grab the next frame
                     frame = grabber.grabImage();
                     
-                    // If frame is null, we reached the end of the video
                     if (frame == null) {
                         System.out.println("End of video reached.");
                         isPlaying = false;
@@ -115,15 +166,21 @@ public class VideoPlayer {
                     Mat mat = converter.convert(frame);
                     canvas.showImage(converter.convert(mat));
 
-                    // Reset the step flag if it was a single step action
+                    int currentFrame = grabber.getFrameNumber();
+                    
+                    // Update UI components dynamically (only if user isn't currently dragging it)
+                    if (!isInteracting) {
+                        videoSlider.setValue(currentFrame);
+                    }
+                    lblCounter.setText("Frame: " + currentFrame + " / " + totalFrames + "   ");
+
                     if (stepRequested) {
                         stepRequested = false;
                     }
 
-                    // Maintain steady frame-rate playback pacing
                     Thread.sleep(frameDelay);
                 } else {
-                    // Idle sleep when paused to prevent pegging the CPU
+                    // Idle sleep when paused
                     Thread.sleep(30);
                 }
             }

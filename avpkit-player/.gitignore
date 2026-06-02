@@ -1,7 +1,6 @@
+/target/
 *.metadata/**
 .metadata/**
 /.metadata/
 *.class
 *.jar
-target/
-build/

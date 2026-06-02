@@ -9,7 +9,7 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 
-public class VideoPlayer {
+public class AVPKitPlayer {
 
     // Video control states
     private static volatile boolean isPlaying = false;
@@ -23,7 +23,7 @@ public class VideoPlayer {
 
     public static void main(String[] args) {
         // Get the video file as an InputStream from the JAR resources
-        java.io.InputStream videoStream = VideoPlayer.class.getResourceAsStream("/FreeFall.mp4");
+        java.io.InputStream videoStream = AVPKitPlayer.class.getResourceAsStream("/FreeFall.mp4");
         
         if (videoStream == null) {
             System.err.println("Error: Could not find FreeFall.mp4 in resources!");
